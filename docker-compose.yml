@@ -4,18 +4,32 @@ services:
       context: ./microservices/submissions-service
     ports:
       - "8082:8082"
+    environment:
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      DYNAMODB_SUBMISSIONS_TABLE: ${DYNAMODB_SUBMISSIONS_TABLE:-submissions}
+      DYNAMODB_AUTO_CREATE_TABLE: ${DYNAMODB_AUTO_CREATE_TABLE:-true}
+      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:-}
 
   payments-service:
     build:
       context: ./microservices/payments-service
     ports:
       - "8083:8083"
+    environment:
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      DYNAMODB_PAYMENTS_TABLE: ${DYNAMODB_PAYMENTS_TABLE:-payments}
+      DYNAMODB_AUTO_CREATE_TABLE: ${DYNAMODB_AUTO_CREATE_TABLE:-true}
+      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:-}
 
   gateway:
     build:
       context: ./microservices/gateway
     ports:
       - "8080:8080"
+    environment:
+      SERVICES_SUBMISSIONS_URL: ${SERVICES_SUBMISSIONS_URL:-http://submissions-service:8082}
+      SERVICES_PAYMENTS_URL: ${SERVICES_PAYMENTS_URL:-http://payments-service:8083}
+      SECURITY_JWT_SECRET: ${SECURITY_JWT_SECRET:-change-this-to-a-long-random-256-bit-secret-key}
     depends_on:
       - submissions-service
       - payments-service

@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/submissions")
@@ -27,6 +28,9 @@ public class SubmissionController {
     @PostMapping
     public Submission createSubmission(@RequestBody Submission submission,
                                        @RequestHeader(value = "X-User-Id", required = false) String userId) {
+        if (submission.getId() == null || submission.getId().isBlank()) {
+            submission.setId(UUID.randomUUID().toString());
+        }
         submission.setUserId(userId == null ? "anonymous" : userId);
         if (submission.getStatus() == null || submission.getStatus().isBlank()) {
             submission.setStatus("CREATED");

@@ -1,0 +1,315 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Laundry full stack on EC2 with DynamoDB and optional ALB HTTPS custom domain
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: laundry
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Existing EC2 Key Pair for SSH access
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+  AllowedSshCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR block allowed to SSH to EC2
+  AllowedHttpCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR block allowed to access service ports
+  EnableAlbHttps:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Set true to create ALB + HTTPS listener
+  VpcId:
+    Type: String
+    Default: ''
+    Description: Required when EnableAlbHttps=true
+  PublicSubnetOneId:
+    Type: String
+    Default: ''
+    Description: Required when EnableAlbHttps=true
+  PublicSubnetTwoId:
+    Type: String
+    Default: ''
+    Description: Required when EnableAlbHttps=true
+  AcmCertificateArn:
+    Type: String
+    Default: ''
+    Description: ACM certificate ARN in the same region, required when EnableAlbHttps=true
+  DomainName:
+    Type: String
+    Default: ''
+    Description: Optional Route53 record to create, for example api.example.com
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: Route53 Hosted Zone ID for DomainName
+  SubmissionsTableName:
+    Type: String
+    Default: submissions
+  PaymentsTableName:
+    Type: String
+    Default: payments
+  GitRepoUrl:
+    Type: String
+    Description: Git repository URL for this project
+  GitRepoBranch:
+    Type: String
+    Default: main
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: JWT secret for gateway
+
+Conditions:
+  UseAlbHttps: !Equals [!Ref EnableAlbHttps, 'true']
+  DirectGatewayIngress: !Equals [!Ref EnableAlbHttps, 'false']
+  CreateDnsRecord: !And
+    - !Condition UseAlbHttps
+    - !Not [!Equals [!Ref DomainName, '']]
+    - !Not [!Equals [!Ref HostedZoneId, '']]
+
+Resources:
+  SubmissionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref SubmissionsTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  PaymentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref PaymentsTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  LaundryEc2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-ec2-role-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: !Sub ${ProjectName}-dynamodb-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !GetAtt SubmissionsTable.Arn
+                  - !GetAtt PaymentsTable.Arn
+
+  LaundryInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref LaundryEc2Role
+
+  LaundrySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${ProjectName} microservices security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedSshCidr
+
+  LaundryGatewayDirectIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: DirectGatewayIngress
+    Properties:
+      GroupId: !Ref LaundrySecurityGroup
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      CidrIp: !Ref AllowedHttpCidr
+
+  LaundryAlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: UseAlbHttps
+    Properties:
+      GroupDescription: !Sub ${ProjectName} ALB security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref AllowedHttpCidr
+
+  LaundryGatewayFromAlbIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: UseAlbHttps
+    Properties:
+      GroupId: !Ref LaundrySecurityGroup
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      SourceSecurityGroupId: !Ref LaundryAlbSecurityGroup
+
+  LaundryEc2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      IamInstanceProfile: !Ref LaundryInstanceProfile
+      SecurityGroupIds:
+        - !Ref LaundrySecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-host
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          dnf update -y
+          dnf install -y docker git awscli
+          systemctl enable --now docker
+          usermod -aG docker ec2-user
+
+          curl -L https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+
+          cd /home/ec2-user
+          sudo -u ec2-user git clone --branch ${GitRepoBranch} ${GitRepoUrl} laundry
+          cd laundry
+
+          cat > .env.aws <<EOF
+          AWS_REGION=${AWS::Region}
+          CF_STACK_NAME=${AWS::StackName}
+          DYNAMODB_SUBMISSIONS_TABLE=${SubmissionsTableName}
+          DYNAMODB_PAYMENTS_TABLE=${PaymentsTableName}
+          DYNAMODB_AUTO_CREATE_TABLE=false
+          DYNAMODB_ENDPOINT=
+          SERVICES_SUBMISSIONS_URL=http://submissions-service:8082
+          SERVICES_PAYMENTS_URL=http://payments-service:8083
+          SECURITY_JWT_SECRET=${JwtSecret}
+          EOF
+
+          chown ec2-user:ec2-user .env.aws
+          chmod 600 .env.aws
+
+          sudo -u ec2-user docker-compose --env-file .env.aws build
+          sudo -u ec2-user docker-compose --env-file .env.aws up -d
+
+  LaundryAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Condition: UseAlbHttps
+    Properties:
+      Name: !Sub ${ProjectName}-alb
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref LaundryAlbSecurityGroup
+      Subnets:
+        - !Ref PublicSubnetOneId
+        - !Ref PublicSubnetTwoId
+
+  LaundryAlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: UseAlbHttps
+    Properties:
+      Name: !Sub ${ProjectName}-tg
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 8080
+      TargetType: instance
+      HealthCheckPath: /swagger-ui.html
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: 200-399
+      Targets:
+        - Id: !Ref LaundryEc2Instance
+          Port: 8080
+
+  LaundryAlbHttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: UseAlbHttps
+    Properties:
+      LoadBalancerArn: !Ref LaundryAlb
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref AcmCertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref LaundryAlbTargetGroup
+
+  LaundryDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateDnsRecord
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt LaundryAlb.DNSName
+        HostedZoneId: !GetAtt LaundryAlb.CanonicalHostedZoneID
+
+Outputs:
+  InstanceId:
+    Description: EC2 instance ID
+    Value: !Ref LaundryEc2Instance
+  PublicIp:
+    Description: Public IP address of the EC2 instance
+    Value: !GetAtt LaundryEc2Instance.PublicIp
+  GatewaySwaggerUrl:
+    Description: Gateway Swagger URL
+    Value: !Sub http://${LaundryEc2Instance.PublicIp}:8080/swagger-ui.html
+  AlbDnsName:
+    Condition: UseAlbHttps
+    Description: Public DNS name of the ALB
+    Value: !GetAtt LaundryAlb.DNSName
+  HttpsDomainUrl:
+    Condition: CreateDnsRecord
+    Description: HTTPS URL through custom domain
+    Value: !Sub https://${DomainName}/swagger-ui.html
+  SubmissionsTableOutput:
+    Description: Submissions DynamoDB table name
+    Value: !Ref SubmissionsTable
+  PaymentsTableOutput:
+    Description: Payments DynamoDB table name
+    Value: !Ref PaymentsTable

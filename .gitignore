@@ -15,7 +15,14 @@ Thumbs.db
 ### Environment files ###
 .env
 .env.*
+.env.aws
 !.env.example
+!deploy/aws/.env.aws.example
+
+### AWS local secrets ###
+deploy/aws/keys/
+.aws/
+*.pem
 
 ### STS ###
 .apt_generated
