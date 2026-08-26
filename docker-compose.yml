@@ -1,4 +1,15 @@
 services:
+  payments-db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: payments
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+    ports:
+      - "5432:5432"
+    volumes:
+      - payments-db-data:/var/lib/postgresql/data
+
   submissions-service:
     build:
       context: ./microservices/submissions-service
@@ -16,10 +27,12 @@ services:
     ports:
       - "8083:8083"
     environment:
-      AWS_REGION: ${AWS_REGION:-us-east-1}
-      DYNAMODB_PAYMENTS_TABLE: ${DYNAMODB_PAYMENTS_TABLE:-payments}
-      DYNAMODB_AUTO_CREATE_TABLE: ${DYNAMODB_AUTO_CREATE_TABLE:-true}
-      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:-}
+      PAYMENTS_DATASOURCE_URL: ${PAYMENTS_DATASOURCE_URL:-jdbc:postgresql://payments-db:5432/payments}
+      PAYMENTS_DATASOURCE_USERNAME: ${PAYMENTS_DATASOURCE_USERNAME:-payments}
+      PAYMENTS_DATASOURCE_PASSWORD: ${PAYMENTS_DATASOURCE_PASSWORD:-payments}
+      PAYMENTS_WEBHOOK_SECRET: ${PAYMENTS_WEBHOOK_SECRET:-change-me-webhook-secret}
+    depends_on:
+      - payments-db
 
   gateway:
     build:
@@ -33,3 +46,6 @@ services:
     depends_on:
       - submissions-service
       - payments-service
+
+volumes:
+  payments-db-data:

@@ -13,8 +13,8 @@ public class OpenApiConfig {
     public OpenAPI paymentsOpenApi() {
         return new OpenAPI()
                 .info(new Info()
-                        .title("Payments Service API")
-                        .description("Payments microservice for the Laundry example")
+                        .title("Payment Processing API")
+                        .description("Payment processing microservice with validation, idempotency, refunds, and webhook support")
                         .version("v1"));
     }
 }

@@ -32,7 +32,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/api/");
+        return !request.getRequestURI().startsWith("/api/")
+                || request.getRequestURI().equals("/api/payments/webhook");
     }
 
     @Override

@@ -1,8 +1,8 @@
 # Laundry Microservices Example
 
-A small Spring Boot microservices demo built around an API gateway, JWT authentication, Swagger/OpenAPI, and isolated DynamoDB-backed services.
+A small Spring Boot microservices demo built around an API gateway, JWT authentication, Swagger/OpenAPI, and AWS-backed microservices.
 
-I used an API Gateway as the single entry point for the frontend. It handled routing requests to the appropriate Spring Boot microservice, while authentication and authorization were handled using JWT. The individual services were responsible for their own business logic and persistence using DynamoDB. We could then independently deploy and scale services such as submissions and payments.
+I used an API Gateway as the single entry point for the frontend. It handled routing requests to the appropriate Spring Boot microservice, while authentication and authorization were handled using JWT. The individual services were responsible for their own business logic and persistence: submissions use DynamoDB, payments use PostgreSQL on AWS, and the stack runs on EC2 in AWS. We can then independently deploy and scale services such as submissions and payments.
 
 ### Demo
 https://laundry-isxy.onrender.com/swagger-ui/index.html
@@ -15,10 +15,10 @@ flowchart LR
     GW --> SUB[Submissions Service :8082]
     GW --> PAY[Payments Service :8083]
   SUB --> DDBS[(DynamoDB submissions table)]
-  PAY --> DDBP[(DynamoDB payments table)]
+  PAY --> RDS[(AWS PostgreSQL / RDS)]
 ```
 
-The gateway issues and validates JWT tokens, then forwards requests to downstream services. Each service has its own DynamoDB table and its own Swagger UI.
+The gateway issues and validates JWT tokens, then forwards requests to downstream services. The submissions service stores data in DynamoDB, while the payments service uses PostgreSQL on AWS. Each service exposes its own Swagger UI.
 
 ## Services
 
@@ -28,12 +28,26 @@ The gateway issues and validates JWT tokens, then forwards requests to downstrea
 | Submissions service | 8082 | Manages submissions |
 | Payments service | 8083 | Manages payments |
 
+## AWS services used
+
+This project is designed to run on AWS using a simple cloud-native deployment model:
+
+- Amazon DynamoDB for submissions persistence
+- Amazon RDS for PostgreSQL for the payments service
+- Amazon EC2 for hosting the gateway and microservices
+- AWS IAM for instance permissions and least-privilege access
+- Amazon VPC Security Groups for ingress control
+- Application Load Balancer (ALB) for optional HTTPS/public routing
+- Amazon Route 53 and ACM for custom domain + TLS when enabled
+- AWS CloudFormation scripts for infrastructure provisioning
+
 ## Features
 
 - Spring Boot 4.1.0
 - Spring Security for JWT-protected gateway routes
 - Springdoc OpenAPI / Swagger UI on all services
-- AWS SDK v2 DynamoDB Enhanced Client for persistence
+- AWS SDK v2 DynamoDB Enhanced Client for submissions persistence
+- Spring Data JPA with PostgreSQL for payments persistence
 - Docker and Docker Compose support
 
 ## Prerequisites
@@ -89,7 +103,7 @@ OpenAPI JSON is available at `/v3/api-docs` on each service.
 1. Request a JWT from the gateway.
 2. Call the gateway routes with `Authorization: Bearer <token>`.
 3. The gateway validates the token and forwards the request.
-4. The downstream service stores or returns data from its own DynamoDB table.
+4. The downstream service stores or returns data from its respective backing store: DynamoDB for submissions and PostgreSQL for payments.
 
 ## Get a JWT
 
@@ -121,7 +135,7 @@ curl -X GET "http://localhost:8080/api/submissions" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-Create a payment:
+Create a payment locally:
 
 ```bash
 curl -X POST "http://localhost:8080/api/payments" \
@@ -130,11 +144,37 @@ curl -X POST "http://localhost:8080/api/payments" \
   -d '{"amount":39.99,"currency":"USD"}'
 ```
 
-List payments:
+List payments locally:
 
 ```bash
 curl -X GET "http://localhost:8080/api/payments" \
   -H "Authorization: Bearer $TOKEN"
+```
+
+Create a payment in AWS production:
+
+```bash
+TOKEN=$(curl -s "https://api.laundrywithme.com/auth/token?userId=alice&role=user" | sed -E 's/.*"token":"([^"]+)".*/\1/')
+
+curl -X POST "https://api.laundrywithme.com/api/payments" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"amount":39.99,"currency":"USD"}'
+```
+
+List payments in AWS production:
+
+```bash
+curl -X GET "https://api.laundrywithme.com/api/payments" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+If you are testing without JWT, the gateway also accepts the forwarded headers pattern used in local debugging:
+
+```bash
+curl -sS -X GET "https://api.laundrywithme.com/api/payments" \
+  -H "X-User-Id: user-123" \
+  -H "X-User-Role: USER"
 ```
 
 ## Gateway Routes
@@ -149,12 +189,12 @@ curl -X GET "http://localhost:8080/api/payments" \
 
 - JWT validation happens in the gateway, not in the downstream services.
 - The gateway forwards `X-User-Id` and `X-User-Role` headers.
-- Submissions and payments are persisted in DynamoDB tables.
+- Submissions are persisted in DynamoDB, while payments use PostgreSQL.
 - If ports 8080, 8082, or 8083 are already in use, stop the running process before starting the services again.
 
-## Deploy on AWS (EC2 + DynamoDB)
+## Deploy on AWS (EC2 + DynamoDB + PostgreSQL)
 
-This repository includes scripts in `deploy/aws` to provision DynamoDB tables and run the microservices stack on an EC2 host using Docker Compose.
+This repository includes scripts in `deploy/aws` to provision AWS resources and run the microservices stack on an EC2 host using Docker Compose. The submissions service uses DynamoDB, while the payments service connects to PostgreSQL on AWS.
 
 ### Option A: CloudFormation (recommended)
 

@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Laundry PostgreSQL RDS instance for the payments service
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: laundry
+    Description: Project prefix used for resource names
+
+  DbInstanceIdentifier:
+    Type: String
+    Default: laundry-payments
+    Description: RDS instance identifier
+
+  DbName:
+    Type: String
+    Default: payments
+    Description: Initial database name
+
+  DbUsername:
+    Type: String
+    Default: payments
+    MinLength: 1
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9_]*'
+    Description: Master username for PostgreSQL
+
+  DbPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Master password for PostgreSQL
+
+  DbClass:
+    Type: String
+    Default: db.t3.micro
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.m6g.large
+      - db.m6g.xlarge
+    Description: RDS instance class
+
+  DbStorageGB:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    Description: Allocated storage in GB
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the RDS instance should be created
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets for the RDS subnet group
+
+  AllowedCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR allowed to connect to PostgreSQL on port 5432
+
+  PubliclyAccessible:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Whether the database should be publicly accessible
+
+  BackupRetentionDays:
+    Type: Number
+    Default: 7
+    MinValue: 0
+    MaxValue: 35
+    Description: Automated backup retention period in days
+
+  MultiAz:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable Multi-AZ deployment
+
+Resources:
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${ProjectName} PostgreSQL RDS access
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref AllowedCidr
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub ${ProjectName} PostgreSQL subnet group
+      SubnetIds: !Ref SubnetIds
+
+  PaymentsDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Ref DbInstanceIdentifier
+      DBName: !Ref DbName
+      DBInstanceClass: !Ref DbClass
+      AllocatedStorage: !Ref DbStorageGB
+      Engine: postgres
+      EngineVersion: '16.3'
+      MasterUsername: !Ref DbUsername
+      MasterUserPassword: !Ref DbPassword
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      PubliclyAccessible: !Equals [!Ref PubliclyAccessible, 'true']
+      BackupRetentionPeriod: !Ref BackupRetentionDays
+      MultiAZ: !Equals [!Ref MultiAz, 'true']
+      StorageEncrypted: true
+      DeletionProtection: false
+      AutoMinorVersionUpgrade: true
+      EnablePerformanceInsights: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-payments-db
+
+Outputs:
+  DatabaseEndpoint:
+    Description: PostgreSQL endpoint for the payments database
+    Value: !GetAtt PaymentsDatabase.Endpoint.Address
+
+  DatabasePort:
+    Description: PostgreSQL port
+    Value: !GetAtt PaymentsDatabase.Endpoint.Port
+
+  JdbcUrl:
+    Description: JDBC connection URL for the payments database
+    Value: !Sub jdbc:postgresql://${PaymentsDatabase.Endpoint.Address}:5432/${DbName}
+
+  DatabaseName:
+    Description: Database name
+    Value: !Ref DbName
+
+  DatabaseUsername:
+    Description: Database master username
+    Value: !Ref DbUsername

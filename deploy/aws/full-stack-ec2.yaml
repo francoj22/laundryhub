@@ -72,6 +72,24 @@ Parameters:
     NoEcho: true
     MinLength: 32
     Description: JWT secret for gateway
+  PaymentsDatasourceUrl:
+    Type: String
+    Default: jdbc:postgresql://laundry-payments.us-east-1.rds.amazonaws.com:5432/payments?sslmode=require
+    Description: JDBC URL for the AWS RDS PostgreSQL payments database. Replace with the actual RDS hostname for your region.
+  PaymentsDatasourceUsername:
+    Type: String
+    Default: payments
+    Description: PostgreSQL username for the payments database
+  PaymentsDatasourcePassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: PostgreSQL password for the payments database
+  PaymentsWebhookSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    Description: Signing secret for payment webhook verification
 
 Conditions:
   UseAlbHttps: !Equals [!Ref EnableAlbHttps, 'true']
@@ -163,6 +181,26 @@ Resources:
       ToPort: 8080
       CidrIp: !Ref AllowedHttpCidr
 
+  LaundrySubmissionsDirectIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: DirectGatewayIngress
+    Properties:
+      GroupId: !Ref LaundrySecurityGroup
+      IpProtocol: tcp
+      FromPort: 8082
+      ToPort: 8082
+      CidrIp: !Ref AllowedHttpCidr
+
+  LaundryPaymentsDirectIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: DirectGatewayIngress
+    Properties:
+      GroupId: !Ref LaundrySecurityGroup
+      IpProtocol: tcp
+      FromPort: 8083
+      ToPort: 8083
+      CidrIp: !Ref AllowedHttpCidr
+
   LaundryAlbSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Condition: UseAlbHttps
@@ -221,6 +259,10 @@ Resources:
           DYNAMODB_PAYMENTS_TABLE=${PaymentsTableName}
           DYNAMODB_AUTO_CREATE_TABLE=false
           DYNAMODB_ENDPOINT=
+          PAYMENTS_DATASOURCE_URL=${PaymentsDatasourceUrl}
+          PAYMENTS_DATASOURCE_USERNAME=${PaymentsDatasourceUsername}
+          PAYMENTS_DATASOURCE_PASSWORD=${PaymentsDatasourcePassword}
+          PAYMENTS_WEBHOOK_SECRET=${PaymentsWebhookSecret}
           SERVICES_SUBMISSIONS_URL=http://submissions-service:8082
           SERVICES_PAYMENTS_URL=http://payments-service:8083
           SECURITY_JWT_SECRET=${JwtSecret}
