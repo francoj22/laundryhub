@@ -1,5 +1,7 @@
 package com.microservice.gateway.web;
 
+import java.util.UUID;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -51,8 +53,11 @@ public class ApiGatewayController {
 
     @PostMapping("/payments")
     public ResponseEntity<String> createPayment(@RequestBody String body,
-                                                @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                                                 HttpServletRequest request) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            idempotencyKey = "payment-" + UUID.randomUUID();
+        }
         return forwardPost(paymentsServiceUrl + "/payments", body, request, idempotencyKey, null, true);
     }
 

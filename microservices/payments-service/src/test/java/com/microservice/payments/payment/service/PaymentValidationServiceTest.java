@@ -1,17 +1,17 @@
 package com.microservice.payments.payment.service;
 
+import java.math.BigDecimal;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import org.junit.jupiter.api.Test;
+
 import com.microservice.payments.payment.dto.CreatePaymentRequest;
 import com.microservice.payments.payment.dto.RefundRequest;
 import com.microservice.payments.payment.entity.Payment;
 import com.microservice.payments.payment.entity.PaymentStatus;
 import com.microservice.payments.payment.exception.InvalidPaymentStateException;
 import com.microservice.payments.payment.exception.InvalidRefundException;
-import org.junit.jupiter.api.Test;
-
-import java.math.BigDecimal;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PaymentValidationServiceTest {
 
@@ -31,6 +31,22 @@ class PaymentValidationServiceTest {
 
         assertEquals("USD", request.getCurrency());
         assertEquals("CARD", request.getPaymentMethod());
+    }
+
+    @Test
+    void shouldDefaultMissingOrderAndPaymentMethodForDemoRequests() {
+        CreatePaymentRequest request = new CreatePaymentRequest();
+        request.setCustomerId("alice");
+        request.setAmount(new BigDecimal("25.00"));
+        request.setCurrency("usd");
+        request.setIdempotencyKey("idem-1");
+
+        service.validateCreateRequest(request);
+
+        assertEquals("USD", request.getCurrency());
+        assertEquals("CARD", request.getPaymentMethod());
+        assertEquals("alice", request.getCustomerId());
+        assertEquals("order-", request.getOrderId().substring(0, 6));
     }
 
     @Test

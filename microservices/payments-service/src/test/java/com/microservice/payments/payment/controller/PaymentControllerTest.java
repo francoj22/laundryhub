@@ -1,5 +1,22 @@
 package com.microservice.payments.payment.controller;
 
+import java.math.BigDecimal;
+import java.time.Instant;
+
+import org.junit.jupiter.api.Test;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microservice.payments.payment.dto.CreatePaymentRequest;
 import com.microservice.payments.payment.dto.PaymentResponse;
@@ -8,23 +25,6 @@ import com.microservice.payments.payment.exception.GlobalExceptionHandler;
 import com.microservice.payments.payment.service.PaymentService;
 import com.microservice.payments.payment.service.PaymentWebhookService;
 import com.microservice.payments.payment.service.RefundService;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.context.annotation.Import;
-import org.springframework.http.MediaType;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.web.servlet.MockMvc;
-
-import java.math.BigDecimal;
-import java.time.Instant;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(PaymentController.class)
 @AutoConfigureMockMvc(addFilters = false)
@@ -75,5 +75,19 @@ class PaymentControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(1L))
                 .andExpect(jsonPath("$.status").value("SUCCESS"));
+    }
+
+    @Test
+    void shouldRejectRequestWhenIdempotencyKeyHeaderIsMissing() throws Exception {
+        CreatePaymentRequest request = new CreatePaymentRequest();
+        request.setOrderId("order-1");
+        request.setAmount(new BigDecimal("19.99"));
+        request.setCurrency("USD");
+        request.setPaymentMethod("CARD");
+
+        mockMvc.perform(post("/payments")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest());
     }
 }

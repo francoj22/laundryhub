@@ -92,9 +92,16 @@ docker-compose up --build
 
 ## Swagger URLs
 
+Local:
+
 - Gateway: http://localhost:8080/swagger-ui.html
 - Submissions service: http://localhost:8082/swagger-ui.html
 - Payments service: http://localhost:8083/swagger-ui.html
+
+Production:
+
+- ALB gateway: https://laundry-alb-1703016127.us-east-1.elb.amazonaws.com/swagger-ui/index.html
+- Custom domain gateway: https://api.laundrywithme.com/swagger-ui/index.html
 
 OpenAPI JSON is available at `/v3/api-docs` on each service.
 
@@ -141,6 +148,7 @@ Create a payment locally:
 curl -X POST "http://localhost:8080/api/payments" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"amount":39.99,"currency":"USD"}'
 ```
 
@@ -156,9 +164,11 @@ Create a payment in AWS production:
 ```bash
 TOKEN=$(curl -s "https://api.laundrywithme.com/auth/token?userId=alice&role=user" | sed -E 's/.*"token":"([^"]+)".*/\1/')
 
-curl -X POST "https://api.laundrywithme.com/api/payments" \
+curl -sS -D - -o /tmp/payment.out \
+  -X POST "https://api.laundrywithme.com/api/payments" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"amount":39.99,"currency":"USD"}'
 ```
 
@@ -335,12 +345,268 @@ chmod +x deploy/aws/deploy-ec2.sh
 ./deploy/aws/deploy-ec2.sh
 ```
 
+### Production deployment on EC2 + RDS
+
+Use the AWS env file when you are deploying the stack in production. This file should contain the real PostgreSQL RDS endpoint and credentials for the payments service.
+
+```bash
+cp deploy/aws/.env.aws.example .env.aws
+```
+
+Then update `.env.aws` with the live values:
+
+```bash
+PAYMENTS_DATASOURCE_URL=jdbc:postgresql://laundry-payments.<region>.rds.amazonaws.com:5432/payments
+PAYMENTS_DATASOURCE_USERNAME=payments
+PAYMENTS_DATASOURCE_PASSWORD=<strong-password>
+SERVICES_PAYMENTS_URL=http://payments-service:8083
+SECURITY_JWT_SECRET=<strong-32-byte-secret>
+```
+
+Start the production stack on the EC2 host:
+
+```bash
+docker compose --env-file .env.aws up -d --build
+```
+
+Check the running services:
+
+```bash
+docker compose --env-file .env.aws ps
+```
+
+Verify the payments service is healthy and listening:
+
+```bash
+docker compose --env-file .env.aws logs payments-service --tail=200
+```
+
+Test the production gateway with a JWT token:
+
+```bash
+TOKEN=$(curl -s "https://api.laundrywithme.com/auth/token?userId=alice&role=user" | sed -E 's/.*"token":"([^"]+)".*/\1/')
+```
+
+Then create a payment through the public gateway:
+
+```bash
+curl -sS -D - -o /tmp/payment.out \
+  -X POST "https://api.laundrywithme.com/api/payments" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"amount":39.99,"currency":"USD"}'
+```
+
+List payments through the public gateway:
+
+```bash
+curl -X GET "https://api.laundrywithme.com/api/payments" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+If you need to test without the JWT flow during a debugging pass, the gateway also accepts forwarded headers:
+
+```bash
+curl -sS -X GET "https://api.laundrywithme.com/api/payments" \
+  -H "X-User-Id: user-123" \
+  -H "X-User-Role: USER"
+```
+
 ### 6) Access the application
 
 - Gateway Swagger UI: `http://<ec2-public-ip>:8080/swagger-ui.html`
 - Submissions Swagger UI: `http://<ec2-public-ip>:8082/swagger-ui.html`
 - Payments Swagger UI: `http://<ec2-public-ip>:8083/swagger-ui.html`
 
+### RDS access mode: secure private setup vs public test setup
 
+This project defaults to the secure AWS pattern: keep PostgreSQL in a private subnet and let the EC2 app instance reach it from inside the same VPC.
+
+Recommended secure default:
+
+```dotenv
+RDS_PUBLICLY_ACCESSIBLE=false
+RDS_ALLOWED_CIDR=10.0.0.0/16
+```
+
+CloudFormation equivalent:
+
+```yaml
+PubliclyAccessible: 'false'
+```
+
+This keeps the database off the public internet while allowing the EC2 app host or VPC CIDR to connect on port 5432.
+
+Only use the public option for testing or a temporary demo setup:
+
+```dotenv
+RDS_PUBLICLY_ACCESSIBLE=true
+RDS_ALLOWED_CIDR=0.0.0.0/0
+```
+
+CloudFormation equivalent:
+
+```yaml
+PubliclyAccessible: 'true'
+```
+
+This is intentionally less secure because the database becomes reachable from the internet. Use it only when you deliberately want public DB access and are comfortable with the higher exposure.
+
+### Deploy and verify after a change
+
+Deploy the secure RDS stack:
+
+```bash
+cd /Users/francojacobo/Downloads/laundry
+source .env.aws
+./deploy/aws/deploy-rds-postgres.sh
+```
+
+Deploy or update DynamoDB tables:
+
+```bash
+./deploy/aws/provision-dynamodb.sh
+```
+
+Restart the app stack:
+
+```bash
+./mvnw -f microservices/gateway/pom.xml spring-boot:run
+./mvnw -f microservices/submissions-service/pom.xml spring-boot:run
+./mvnw -f microservices/payments-service/pom.xml spring-boot:run
+```
+
+Or, if running via Docker Compose:
+
+```bash
+docker compose --env-file .env.aws up -d --build
+```
+
+Verify submissions:
+
+```bash
+TOKEN=$(curl -sS 'https://api.laundrywithme.com/auth/token?userId=alice&role=user' | sed -E 's/.*"token":"([^"]+)".*/\1/')
+
+curl -sS -X POST 'https://api.laundrywithme.com/api/submissions' \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Gateway submission"}'
+
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  'https://api.laundrywithme.com/api/submissions'
+```
+
+Verify payments:
+
+```bash
+TOKEN=$(curl -sS 'https://api.laundrywithme.com/auth/token?userId=alice&role=user' | sed -E 's/.*"token":"([^"]+)".*/\1/')
+
+curl -sS -D - -o /tmp/payment.out \
+  -X POST 'https://api.laundrywithme.com/api/payments' \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"amount":39.99,"currency":"USD"}'
+
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  'https://api.laundrywithme.com/api/payments'
+```
+
+## Part 2: Production Readiness and System Design
+
+### Production readiness assessment
+
+This project is a strong microservice proof of concept, but it is not yet production-ready as-is. The main strengths are the service separation, JWT-based gateway authentication, and clear infrastructure boundaries between submissions and payments. The main gaps are around security hardening, browser compatibility, and operational resilience.
+
+### What is already in place
+
+- Clear gateway, submissions, and payments boundaries
+- JWT-based authentication at the API gateway
+- Separate backing stores for each service
+- Dockerized deployment flow
+- AWS infrastructure scripts for EC2, DynamoDB, and PostgreSQL setup
+
+### Gaps before production
+
+1. CORS is not configured explicitly for browser clients
+   - Without a proper CORS policy, frontend apps running on a different domain or port will be blocked by the browser.
+   - A browser-safe gateway must allow only trusted origins and required HTTP methods.
+
+2. Security headers are not hardened
+   - Add `X-Frame-Options`, `Content-Security-Policy`, `Strict-Transport-Security`, and `Referrer-Policy` where appropriate.
+   - These headers reduce common browser attacks and improve security posture.
+
+3. JWT handling should be stronger
+   - Use short-lived access tokens and refresh tokens.
+   - Validate issuer, audience, expiry, and signature consistently.
+   - Store secrets in a proper secrets manager instead of plain environment variables.
+   - Consider token revocation or rotation strategies for stronger control.
+
+4. API abuse protection is missing
+   - Add rate limiting and request throttling.
+   - Use a WAF or API gateway protection layer for public traffic.
+   - Add circuit breakers and retries for downstream service failures.
+
+5. Operational visibility is limited
+   - Add centralized logs, metrics, and tracing.
+   - Add health and readiness endpoints for all services.
+   - Configure alerts for failed auth, DB failures, and high error rates.
+
+### Recommended production architecture
+
+```mermaid
+flowchart LR
+    User[Browser / Mobile App] --> CDN[CloudFront / CDN]
+    CDN --> WAF[WAF / Rate Limiting]
+    WAF --> ALB[ALB / TLS Termination]
+    ALB --> GW[API Gateway]
+    GW --> Auth[Auth Service / JWT Issuer]
+    GW --> SUB[Submissions Service]
+    GW --> PAY[Payments Service]
+    SUB --> DDB[(DynamoDB)]
+    PAY --> RDS[(PostgreSQL RDS)]
+    PAY --> MQ[Async Events / Queue]
+    GW --> Cache[(Redis / Token Cache)]
+    GW --> Obs[Logs + Metrics + Tracing]
+    PAY --> Obs
+    SUB --> Obs
+```
+
+### Production design improvements
+
+- Keep the gateway public and restrict direct access to internal services.
+- Place databases and non-public services in private subnets.
+- Use TLS termination at the load balancer or ingress layer.
+- Use a managed secrets store for JWT signing keys and DB credentials.
+- Add WAF, rate limiting, and request validation at the edge.
+- Add CI/CD pipelines with automated tests, security checks, and deployment gating.
+- Use private networking and service-to-service auth for internal calls.
+
+### Recommended production roadmap
+
+#### Must have before production
+
+- Add explicit CORS configuration
+- Add secure response headers
+- Add rate limiting and abuse protection
+- Configure secret management for JWT and DB credentials
+- Add structured 401 and 403 responses
+- Add health checks and monitoring
+- Enforce role-based access controls for protected endpoints
+
+#### Recommended next steps
+
+- Introduce refresh tokens and token rotation
+- Add OpenTelemetry tracing across services
+- Add resilience patterns for downstream calls
+- Add integration tests covering invalid JWT, auth failure, and edge cases
+- Add database backup, migration, and rollback automation
+
+### Bottom line
+
+This project is a strong microservices demo and a good foundation for a real product, but it still needs production hardening before public deployment. The most important next improvements are CORS, security headers, API rate limiting, secrets management, and observability.
+
+---
 
 pids=$(lsof -ti tcp:8082); if [[ -n "$pids" ]]; then kill -9 $pids; fi; cd microservices/submissions-service && ../../mvnw spring-boot:run

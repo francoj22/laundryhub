@@ -9,6 +9,13 @@ services:
       - "5432:5432"
     volumes:
       - payments-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
 
   submissions-service:
     build:
@@ -32,7 +39,15 @@ services:
       PAYMENTS_DATASOURCE_PASSWORD: ${PAYMENTS_DATASOURCE_PASSWORD:-payments}
       PAYMENTS_WEBHOOK_SECRET: ${PAYMENTS_WEBHOOK_SECRET:-change-me-webhook-secret}
     depends_on:
-      - payments-db
+      payments-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8083/v3/api-docs || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
 
   gateway:
     build:
@@ -44,8 +59,17 @@ services:
       SERVICES_PAYMENTS_URL: ${SERVICES_PAYMENTS_URL:-http://payments-service:8083}
       SECURITY_JWT_SECRET: ${SECURITY_JWT_SECRET:-change-this-to-a-long-random-256-bit-secret-key}
     depends_on:
-      - submissions-service
-      - payments-service
+      submissions-service:
+        condition: service_started
+      payments-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/swagger-ui.html || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
 
 volumes:
   payments-db-data:

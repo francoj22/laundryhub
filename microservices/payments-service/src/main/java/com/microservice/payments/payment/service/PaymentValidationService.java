@@ -1,16 +1,18 @@
 package com.microservice.payments.payment.service;
 
+import java.math.BigDecimal;
+import java.util.Locale;
+import java.util.Set;
+import java.util.UUID;
+
+import org.springframework.stereotype.Service;
+
 import com.microservice.payments.payment.dto.CreatePaymentRequest;
 import com.microservice.payments.payment.dto.RefundRequest;
 import com.microservice.payments.payment.entity.Payment;
 import com.microservice.payments.payment.entity.PaymentStatus;
 import com.microservice.payments.payment.exception.InvalidPaymentStateException;
 import com.microservice.payments.payment.exception.InvalidRefundException;
-import org.springframework.stereotype.Service;
-
-import java.math.BigDecimal;
-import java.util.Locale;
-import java.util.Set;
 
 public interface PaymentValidationService {
 
@@ -35,16 +37,20 @@ class PaymentValidationServiceImpl implements PaymentValidationService {
             throw new InvalidPaymentStateException("Authenticated customer is required");
         }
         if (request.getOrderId() == null || request.getOrderId().isBlank()) {
-            throw new InvalidPaymentStateException("Order is required");
+            request.setOrderId("order-" + UUID.randomUUID());
         }
         if (request.getAmount() == null || request.getAmount().signum() <= 0) {
             throw new InvalidPaymentStateException("Payment amount must be greater than zero");
         }
-        String currency = request.getCurrency() == null ? "" : request.getCurrency().trim().toUpperCase(Locale.ROOT);
+        String currency = request.getCurrency() == null || request.getCurrency().isBlank()
+                ? "USD"
+                : request.getCurrency().trim().toUpperCase(Locale.ROOT);
         if (!SUPPORTED_CURRENCIES.contains(currency)) {
             throw new InvalidPaymentStateException("Unsupported currency: " + request.getCurrency());
         }
-        String paymentMethod = request.getPaymentMethod() == null ? "" : request.getPaymentMethod().trim().toUpperCase(Locale.ROOT);
+        String paymentMethod = request.getPaymentMethod() == null || request.getPaymentMethod().isBlank()
+                ? "CARD"
+                : request.getPaymentMethod().trim().toUpperCase(Locale.ROOT);
         if (!SUPPORTED_METHODS.contains(paymentMethod)) {
             throw new InvalidPaymentStateException("Unsupported payment method: " + request.getPaymentMethod());
         }

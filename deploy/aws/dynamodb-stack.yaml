@@ -30,10 +30,10 @@ Resources:
       TableName: !Ref PaymentsTableName
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: id
+        - AttributeName: payment_id
           AttributeType: S
       KeySchema:
-        - AttributeName: id
+        - AttributeName: payment_id
           KeyType: HASH
 
   LaundryDynamoDbPolicy:
