@@ -455,6 +455,48 @@ This is intentionally less secure because the database becomes reachable from th
 
 ### Deploy and verify after a change
 
+#### Deploy code changes to production EC2
+
+When you've made code changes and want to deploy to production:
+
+```bash
+# 1. Get your EC2 instance IP
+source .env.aws
+EC2_IP=$(aws ec2 describe-instances \
+  --region "$AWS_REGION" \
+  --filters "Name=instance-state-name,Values=running" \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text)
+
+# 2. SSH into your EC2 instance
+ssh -i deploy/aws/keys/${EC2_KEY_PAIR_NAME}.pem ec2-user@$EC2_IP
+
+# 3. Once on the EC2 instance, pull the latest code
+cd laundry
+git fetch origin
+git reset --hard origin/main
+
+# 4. Ensure .env.aws has the production configuration
+# Add API_BASE_URL if not present:
+grep -q "^API_BASE_URL=" .env.aws || echo "API_BASE_URL=https://api.laundrywithme.com" >> .env.aws
+
+# 5. Rebuild and restart services (choose one option below)
+
+# Option A: Restart just the gateway (fastest)
+docker-compose --env-file .env.aws up -d --build gateway
+
+# Option B: Restart all services
+docker-compose --env-file .env.aws up -d --build
+
+# 6. Check service status
+docker-compose --env-file .env.aws ps
+
+# 7. Check logs if needed
+docker-compose --env-file .env.aws logs gateway --tail=50
+```
+
+#### Deploy infrastructure changes
+
 Deploy the secure RDS stack:
 
 ```bash
@@ -467,20 +509,6 @@ Deploy or update DynamoDB tables:
 
 ```bash
 ./deploy/aws/provision-dynamodb.sh
-```
-
-Restart the app stack:
-
-```bash
-./mvnw -f microservices/gateway/pom.xml spring-boot:run
-./mvnw -f microservices/submissions-service/pom.xml spring-boot:run
-./mvnw -f microservices/payments-service/pom.xml spring-boot:run
-```
-
-Or, if running via Docker Compose:
-
-```bash
-docker compose --env-file .env.aws up -d --build
 ```
 
 Verify submissions:
