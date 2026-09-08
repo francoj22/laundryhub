@@ -58,6 +58,7 @@ services:
       SERVICES_SUBMISSIONS_URL: ${SERVICES_SUBMISSIONS_URL:-http://submissions-service:8082}
       SERVICES_PAYMENTS_URL: ${SERVICES_PAYMENTS_URL:-http://payments-service:8083}
       SECURITY_JWT_SECRET: ${SECURITY_JWT_SECRET:-change-this-to-a-long-random-256-bit-secret-key}
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:8080}
     depends_on:
       submissions-service:
         condition: service_started
