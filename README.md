@@ -473,8 +473,10 @@ ssh -i deploy/aws/keys/${EC2_KEY_PAIR_NAME}.pem ec2-user@$EC2_IP
 
 # 3. Once on the EC2 instance, pull the latest code
 cd laundry
-git fetch origin
-git reset --hard origin/main
+git pull origin main
+
+# If git pull fails due to local changes, force sync with GitHub:
+# git fetch origin && git reset --hard origin/main
 
 # 4. Ensure .env.aws has the production configuration
 # Add API_BASE_URL if not present:
